@@ -69,6 +69,9 @@ final class AppState: ObservableObject {
     @Published var openAIChatModel: String = ChatProvider.openai.defaultModel {
         didSet { UserDefaults.standard.set(openAIChatModel, forKey: "openAIChatModel") }
     }
+    @Published var deepSeekChatModel: String = ChatProvider.deepseek.defaultModel {
+        didSet { UserDefaults.standard.set(deepSeekChatModel, forKey: "deepSeekChatModel") }
+    }
 
     // The always-on workspace pill (default: VS Code). Persisted.
     @Published var mainPillId: String = PillCatalog.defaultMainPillId {
@@ -97,6 +100,7 @@ final class AppState: ObservableObject {
             case .anthropic: models = await ClaudeService.fetchModels(apiKey: apiKey)
             case .google:    models = await ClaudeService.fetchGoogleModels(apiKey: apiKey)
             case .openai:    models = await ClaudeService.fetchOpenAIModels(apiKey: apiKey)
+            case .deepseek:  models = await ClaudeService.fetchDeepSeekModels(apiKey: apiKey)
             }
             loadingProviderModels.remove(provider)
             if models.isEmpty {
@@ -104,7 +108,7 @@ final class AppState: ObservableObject {
             } else {
                 fetchedProviderModels[provider] = models
                 // If the saved model isn't in the fetched list, pick a sensible default:
-                // prefer "sonnet" (Anthropic), "flash" (Google), "mini" (OpenAI); else first.
+                // prefer "sonnet" (Anthropic), "flash" (Google), "mini" (OpenAI), "chat" (DeepSeek); else first.
                 switch provider {
                 case .anthropic:
                     if !models.contains(where: { $0.id == claudeModel }) {
@@ -118,6 +122,10 @@ final class AppState: ObservableObject {
                     if !models.contains(where: { $0.id == openAIChatModel }) {
                         openAIChatModel = models.first(where: { $0.id.contains("mini") })?.id ?? models.first!.id
                     }
+                case .deepseek:
+                    if !models.contains(where: { $0.id == deepSeekChatModel }) {
+                        deepSeekChatModel = models.first(where: { $0.id.contains("chat") })?.id ?? models.first!.id
+                    }
                 }
             }
         }
@@ -129,6 +137,7 @@ final class AppState: ObservableObject {
         case .anthropic: return claudeModel
         case .google:    return googleChatModel
         case .openai:    return openAIChatModel
+        case .deepseek:  return deepSeekChatModel
         }
     }
 
@@ -251,6 +260,7 @@ final class AppState: ObservableObject {
         if let v = ud.string(forKey: "chatProvider"), let p = ChatProvider(rawValue: v) { chatProvider = p }
         if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
         if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
+        if let v = ud.string(forKey: "deepSeekChatModel"), !v.isEmpty { deepSeekChatModel = v }
         // Migrate old 60s default → 15s
         if let v = ud.object(forKey: "autoCloseInterval") as? Double {
             autoCloseInterval = (v == 60) ? 15 : v

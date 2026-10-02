@@ -5,7 +5,7 @@ import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
 import { Bridge, type ChatContext } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State, type ChatMessage } from "../core/state";
+import { State, type ChatMessage, PROVIDERS, getActiveModel } from "../core/state";
 import type { ViewHost } from "./views";
 
 let nextId = 1;
@@ -33,6 +33,16 @@ function typingDots(): HTMLElement {
 function contextChip(label: string): HTMLElement {
   const chip = h("div", { class: "chip" }, h("i", { class: "chip-dot" }), h("span", { text: label }));
   requestAnimationFrame(() => chip.classList.add("settled"));
+  return chip;
+}
+
+/** The chip showing the active AI provider and model. */
+function providerChip(providerName: string, modelName: string, color: string): HTMLElement {
+  const dot = h("i", { class: "chip-dot", style: `background:${color}` });
+  const chip = h("div", { class: "chip settled", style: "border-color:transparent;transform:none" },
+    dot,
+    h("span", { text: `${providerName} · ${modelName}` }),
+  );
   return chip;
 }
 
@@ -104,12 +114,23 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   return {
     el,
     sync() {
+      const prov = PROVIDERS.find((p) => p.id === State.settings.chatProvider) ?? PROVIDERS[0];
+      const modelName = getActiveModel(State.settings);
+      const cardEl = el.querySelector(".card") as HTMLElement;
+      if (cardEl) {
+        cardEl.style.setProperty("--wash", `${prov.color}55`);
+      }
+
       const file = State.droppedFile;
-      const wantChip = file?.name ?? "";
-      if (chipRow.dataset.label !== wantChip) {
-        chipRow.dataset.label = wantChip;
+      const fileLabel = file?.name ?? "";
+      const chipKey = `${prov.id}:${modelName}:${fileLabel}`;
+      if (chipRow.dataset.key !== chipKey) {
+        chipRow.dataset.key = chipKey;
         clear(chipRow);
-        if (wantChip) chipRow.append(contextChip(wantChip));
+        if (fileLabel) {
+          chipRow.append(contextChip(fileLabel));
+        }
+        chipRow.append(providerChip(prov.shortName, modelName, prov.color));
       }
 
       const thinking = State.stateOverride === "thinking";

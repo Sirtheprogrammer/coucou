@@ -5,7 +5,7 @@
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
-import { State, type AgentTask } from "../core/state";
+import { State, PROVIDERS, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
@@ -271,6 +271,7 @@ function lighten(hex: string, amount: number): string {
 // ── Empty ─────────────────────────────────────────────────────────────────────
 
 function buildEmpty(actions: ViewActions): ViewHost {
+  const askBtn = btn("Ask Mochi", "primary", () => actions.setView("prompt"));
   const body = h(
     "div",
     { class: "stack", style: "padding:0 18px 0 118px;flex-direction:row;align-items:center;gap:16px" },
@@ -281,9 +282,15 @@ function buildEmpty(actions: ViewActions): ViewHost {
       h("div", { class: "sub", text: "Drop a file or window, or ask me anything." }),
     ),
     h("div", { class: "grow" }),
-    btn("Ask Claude", "primary", () => actions.setView("prompt")),
+    askBtn,
   );
-  return { el: h("div", { class: "view" }, card(null, body)), sync() {} };
+  return {
+    el: h("div", { class: "view" }, card(null, body)),
+    sync() {
+      const prov = PROVIDERS.find((p) => p.id === State.settings.chatProvider);
+      askBtn.textContent = prov ? `Ask ${prov.shortName}` : "Ask Mochi";
+    },
+  };
 }
 
 // ── Approval ──────────────────────────────────────────────────────────────────

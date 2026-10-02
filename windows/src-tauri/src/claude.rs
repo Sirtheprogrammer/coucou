@@ -72,12 +72,27 @@ pub struct ChatReply {
 /// in the note view.
 pub async fn send(
     chat: &Chat,
+    provider: &str,
+    model: &str,
+    query: String,
+    context: Option<ChatContext>,
+) -> Result<ChatReply, String> {
+    match provider {
+        "openai" | "google" | "deepseek" => {
+            send_openai_compatible(chat, provider, model, query, context).await
+        }
+        _ => send_anthropic(chat, model, query, context).await,
+    }
+}
+
+async fn send_anthropic(
+    chat: &Chat,
     model: &str,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
     let key = secrets::get("anthropic-api-key")
-        .ok_or_else(|| "API key missing. Open settings.".to_string())?;
+        .ok_or_else(|| "Claude API key missing. Open settings.".to_string())?;
 
     let mut content: Vec<Value> = Vec::new();
 
@@ -155,6 +170,210 @@ pub async fn send(
         return Err("No response text.".into());
     }
     Ok(ChatReply { text })
+}
+
+async fn send_openai_compatible(
+    chat: &Chat,
+    provider: &str,
+    model: &str,
+    query: String,
+    context: Option<ChatContext>,
+) -> Result<ChatReply, String> {
+    let (key_name, provider_name, endpoint) = match provider {
+        "openai" => ("openai-api-key", "OpenAI", "https://api.openai.com/v1/chat/completions"),
+        "google" => ("google-api-key", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
+        "deepseek" => ("deepseek-api-key", "DeepSeek", "https://api.deepseek.com/chat/completions"),
+        _ => return Err(format!("Unknown provider {provider}")),
+    };
+
+    let key = secrets::get(key_name)
+        .ok_or_else(|| format!("{provider_name} API key missing. Open settings."))?;
+
+    let mut content: Vec<Value> = Vec::new();
+    let mut text_prefix = String::new();
+
+    if chat.is_empty() {
+        match &context {
+            Some(ChatContext::File { name, path }) => {
+                let ext = std::path::Path::new(path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let media = match ext.as_str() {
+                    "jpg" | "jpeg" => Some("image/jpeg"),
+                    "png" => Some("image/png"),
+                    "gif" => Some("image/gif"),
+                    "webp" => Some("image/webp"),
+                    _ => None,
+                };
+
+                if let Some(media_type) = media {
+                    if provider != "deepseek" {
+                        if let Ok(bytes) = std::fs::read(path) {
+                            content.push(json!({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": format!("data:{media_type};base64,{}", base64(&bytes))
+                                }
+                            }));
+                        }
+                    }
+                    text_prefix.push_str(&format!("File: {name}\n\n"));
+                } else if let Ok(text) = std::fs::read_to_string(path) {
+                    if (text.len() as u64) <= MAX_INLINE_TEXT {
+                        text_prefix.push_str(&format!("File: {name}\nFile contents:\n{text}\n\n"));
+                    } else {
+                        text_prefix.push_str(&format!("File: {name}\n\n"));
+                    }
+                } else {
+                    text_prefix.push_str(&format!("File: {name}\n\n"));
+                }
+            }
+            Some(ChatContext::Window { app_name, title, url }) => {
+                let mut text = format!("Context — App: {app_name}, Window: {title}");
+                if let Some(url) = url {
+                    text.push_str(&format!(", URL: {url}"));
+                }
+                text_prefix.push_str(&format!("{text}\n\n"));
+            }
+            None => {}
+        }
+    }
+
+    let full_user_text = format!("{text_prefix}{query}");
+    content.push(json!({ "type": "text", "text": full_user_text }));
+
+    chat.push(json!({ "role": "user", "content": content }));
+
+    let msgs = to_openai_messages(SYSTEM_PROMPT, &chat.snapshot());
+    let body = json!({
+        "model": model,
+        "max_tokens": MAX_TOKENS,
+        "messages": msgs,
+    });
+
+    let response = match call_openai_compatible(endpoint, &key, &body).await {
+        Ok(v) => v,
+        Err(err) => {
+            chat.pop();
+            return Err(err);
+        }
+    };
+
+    let text = response
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Unexpected API response format.".to_string())?
+        .trim()
+        .to_string();
+
+    if text.is_empty() {
+        chat.pop();
+        return Err("No response text.".into());
+    }
+
+    chat.push(json!({
+        "role": "assistant",
+        "content": [{ "type": "text", "text": text.clone() }]
+    }));
+
+    Ok(ChatReply { text })
+}
+
+pub fn to_openai_messages(system_prompt: &str, history: &[Value]) -> Vec<Value> {
+    let mut msgs = vec![json!({
+        "role": "system",
+        "content": system_prompt,
+    })];
+
+    for m in history {
+        let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
+        let content_val = m.get("content");
+        match content_val {
+            Some(Value::String(s)) => {
+                if !s.is_empty() {
+                    msgs.push(json!({ "role": role, "content": s }));
+                }
+            }
+            Some(Value::Array(arr)) => {
+                let mut text_parts = Vec::new();
+                let mut other_parts = Vec::new();
+
+                for b in arr {
+                    let b_type = b.get("type").and_then(Value::as_str).unwrap_or("");
+                    if b_type == "text" {
+                        if let Some(t) = b.get("text").and_then(Value::as_str) {
+                            text_parts.push(t);
+                        }
+                    } else if b_type == "image_url" {
+                        other_parts.push(b.clone());
+                    } else if b_type == "image" {
+                        if let Some(source) = b.get("source") {
+                            let media = source.get("media_type").and_then(Value::as_str).unwrap_or("image/jpeg");
+                            let data = source.get("data").and_then(Value::as_str).unwrap_or("");
+                            if !data.is_empty() {
+                                other_parts.push(json!({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": format!("data:{media};base64,{data}")
+                                    }
+                                }));
+                            }
+                        }
+                    }
+                }
+
+                if !other_parts.is_empty() {
+                    let mut parts = Vec::new();
+                    if !text_parts.is_empty() {
+                        parts.push(json!({ "type": "text", "text": text_parts.join("\n") }));
+                    }
+                    parts.extend(other_parts);
+                    msgs.push(json!({ "role": role, "content": parts }));
+                } else if !text_parts.is_empty() {
+                    msgs.push(json!({ "role": role, "content": text_parts.join("\n") }));
+                }
+            }
+            _ => {}
+        }
+    }
+    msgs
+}
+
+async fn call_openai_compatible(endpoint: &str, key: &str, body: &Value) -> Result<Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .post(endpoint)
+        .header("authorization", format!("Bearer {key}"))
+        .header("content-type", "application/json")
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+
+    let status = response.status();
+    let text = response.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let detail = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| {
+                v.get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| text.chars().take(200).collect());
+        return Err(format!("API error {status}: {detail}"));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("Bad API response: {e}"))
 }
 
 async fn call(key: &str, body: &Value) -> Result<Value, String> {
@@ -259,5 +478,43 @@ mod tests {
         assert_eq!(base64(b"foob"), "Zm9vYg==");
         assert_eq!(base64(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn to_openai_messages_formats_history_and_system() {
+        use serde_json::json;
+        let history = vec![
+            json!({ "role": "user", "content": [{ "type": "text", "text": "hello" }] }),
+            json!({ "role": "assistant", "content": [{ "type": "text", "text": "hi there" }] }),
+        ];
+        let msgs = super::to_openai_messages("system test", &history);
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[0]["content"], "system test");
+        assert_eq!(msgs[1]["role"], "user");
+        assert_eq!(msgs[1]["content"], "hello");
+        assert_eq!(msgs[2]["role"], "assistant");
+        assert_eq!(msgs[2]["content"], "hi there");
+    }
+
+    #[test]
+    fn to_openai_messages_translates_image_blocks() {
+        use serde_json::json;
+        let history = vec![
+            json!({
+                "role": "user",
+                "content": [
+                    { "type": "image", "source": { "media_type": "image/png", "data": "abc123==" } },
+                    { "type": "text", "text": "look at this" }
+                ]
+            }),
+        ];
+        let msgs = super::to_openai_messages("sys", &history);
+        assert_eq!(msgs.len(), 2);
+        let user_content = msgs[1]["content"].as_array().unwrap();
+        assert_eq!(user_content[0]["type"], "text");
+        assert_eq!(user_content[0]["text"], "look at this");
+        assert_eq!(user_content[1]["type"], "image_url");
+        assert_eq!(user_content[1]["image_url"]["url"], "data:image/png;base64,abc123==");
     }
 }

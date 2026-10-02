@@ -241,8 +241,39 @@ async fn chat_send(
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let model = shared.settings.lock().unwrap().model.clone();
-    claude::send(&chat, &model, query, context).await
+    let settings = shared.settings.lock().unwrap().clone();
+    let provider = settings.chat_provider.clone();
+    let model = match provider.as_str() {
+        "openai" => {
+            if !settings.openai_model.is_empty() {
+                settings.openai_model
+            } else {
+                settings.model
+            }
+        }
+        "google" => {
+            if !settings.google_model.is_empty() {
+                settings.google_model
+            } else {
+                settings.model
+            }
+        }
+        "deepseek" => {
+            if !settings.deepseek_model.is_empty() {
+                settings.deepseek_model
+            } else {
+                settings.model
+            }
+        }
+        _ => {
+            if !settings.claude_model.is_empty() {
+                settings.claude_model
+            } else {
+                settings.model
+            }
+        }
+    };
+    claude::send(&chat, &provider, &model, query, context).await
 }
 
 #[tauri::command]

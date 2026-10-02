@@ -16,14 +16,45 @@ pub struct Settings {
     pub screen: String,
     pub autostart: bool,
     pub hooks_installed: bool,
-    /// Claude model used by the chat. Changeable in the settings window.
+    /// Active chat provider: "anthropic" | "openai" | "google" | "deepseek"
+    #[serde(default = "default_chat_provider")]
+    pub chat_provider: String,
+    /// Claude / active model used by the chat. Changeable in the settings window.
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
+    #[serde(default = "default_claude_model")]
+    pub claude_model: String,
+    #[serde(default = "default_openai_model")]
+    pub openai_model: String,
+    #[serde(default = "default_google_model")]
+    pub google_model: String,
+    #[serde(default = "default_deepseek_model")]
+    pub deepseek_model: String,
+}
+
+fn default_chat_provider() -> String {
+    "anthropic".to_string()
 }
 
 fn default_model() -> String {
     crate::claude::DEFAULT_MODEL.to_string()
+}
+
+fn default_claude_model() -> String {
+    "claude-opus-5".to_string()
+}
+
+fn default_openai_model() -> String {
+    "gpt-4o".to_string()
+}
+
+fn default_google_model() -> String {
+    "gemini-2.0-flash".to_string()
+}
+
+fn default_deepseek_model() -> String {
+    "deepseek-chat".to_string()
 }
 
 impl Default for Settings {
@@ -42,7 +73,12 @@ impl Default for Settings {
             screen: "primary".into(),
             autostart: false,
             hooks_installed: false,
+            chat_provider: default_chat_provider(),
             model: default_model(),
+            claude_model: default_claude_model(),
+            openai_model: default_openai_model(),
+            google_model: default_google_model(),
+            deepseek_model: default_deepseek_model(),
         }
     }
 }

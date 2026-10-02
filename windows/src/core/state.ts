@@ -81,6 +81,96 @@ export interface IntegrationInfo {
   configured: boolean;
 }
 
+export type ChatProviderId = "anthropic" | "openai" | "google" | "deepseek";
+
+export interface ProviderDef {
+  id: ChatProviderId;
+  name: string;
+  shortName: string;
+  color: string;
+  secretKey: string;
+  keyPlaceholder: string;
+  defaultModel: string;
+  models: [string, string][];
+}
+
+export const PROVIDERS: ProviderDef[] = [
+  {
+    id: "anthropic",
+    name: "Anthropic (Claude)",
+    shortName: "Claude",
+    color: "#E07950",
+    secretKey: "anthropic-api-key",
+    keyPlaceholder: "sk-ant-...",
+    defaultModel: "claude-opus-5",
+    models: [
+      ["claude-opus-5", "Claude Opus 5"],
+      ["claude-sonnet-5", "Claude Sonnet 5"],
+      ["claude-haiku-4-5", "Claude Haiku 4.5"],
+      ["claude-3-7-sonnet-latest", "Claude 3.7 Sonnet"],
+      ["claude-3-5-sonnet-latest", "Claude 3.5 Sonnet"],
+    ],
+  },
+  {
+    id: "openai",
+    name: "OpenAI (ChatGPT)",
+    shortName: "ChatGPT",
+    color: "#10A37F",
+    secretKey: "openai-api-key",
+    keyPlaceholder: "sk-...",
+    defaultModel: "gpt-4o",
+    models: [
+      ["gpt-4o", "GPT-4o"],
+      ["gpt-4o-mini", "GPT-4o mini"],
+      ["o3-mini", "o3-mini"],
+      ["o1", "o1"],
+      ["gpt-4-turbo", "GPT-4 Turbo"],
+    ],
+  },
+  {
+    id: "google",
+    name: "Google (Gemini)",
+    shortName: "Gemini",
+    color: "#4285F4",
+    secretKey: "google-api-key",
+    keyPlaceholder: "AIzaSy...",
+    defaultModel: "gemini-2.0-flash",
+    models: [
+      ["gemini-2.0-flash", "Gemini 2.0 Flash"],
+      ["gemini-2.5-pro", "Gemini 2.5 Pro"],
+      ["gemini-2.5-flash", "Gemini 2.5 Flash"],
+      ["gemini-1.5-pro", "Gemini 1.5 Pro"],
+      ["gemini-1.5-flash", "Gemini 1.5 Flash"],
+    ],
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    shortName: "DeepSeek",
+    color: "#4D6BFE",
+    secretKey: "deepseek-api-key",
+    keyPlaceholder: "sk-...",
+    defaultModel: "deepseek-chat",
+    models: [
+      ["deepseek-chat", "DeepSeek-V3 (Chat)"],
+      ["deepseek-reasoner", "DeepSeek-R1 (Reasoner)"],
+    ],
+  },
+];
+
+export function getActiveModel(settings: Settings): string {
+  switch (settings.chatProvider) {
+    case "openai":
+      return settings.openaiModel || "gpt-4o";
+    case "google":
+      return settings.googleModel || "gemini-2.0-flash";
+    case "deepseek":
+      return settings.deepseekModel || "deepseek-chat";
+    default:
+      return settings.claudeModel || settings.model || "claude-opus-5";
+  }
+}
+
 export interface Settings {
   soundEnabled: boolean;
   soundVolume: number;
@@ -90,8 +180,13 @@ export interface Settings {
   screen: "primary" | "cursor";
   autostart: boolean;
   hooksInstalled: boolean;
-  /** Claude model used by the chat. */
+  chatProvider: ChatProviderId;
+  /** Active model used by the chat. */
   model: string;
+  claudeModel: string;
+  openaiModel: string;
+  googleModel: string;
+  deepseekModel: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -105,7 +200,12 @@ export const DEFAULT_SETTINGS: Settings = {
   screen: "primary",
   autostart: false,
   hooksInstalled: false,
+  chatProvider: "anthropic",
   model: "claude-opus-5",
+  claudeModel: "claude-opus-5",
+  openaiModel: "gpt-4o",
+  googleModel: "gemini-2.0-flash",
+  deepseekModel: "deepseek-chat",
 };
 
 type Listener = () => void;

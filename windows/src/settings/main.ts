@@ -4,7 +4,7 @@
 
 import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
-import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import { DEFAULT_SETTINGS, PROVIDERS, type ChatProviderId, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
@@ -171,86 +171,158 @@ function claudeSection(status: HookStatus): HTMLElement {
   return section;
 }
 
-// ── Claude API section ────────────────────────────────────────────────────────
+// ── AI & Chat section ─────────────────────────────────────────────────────────
 
-const MODELS: [string, string][] = [
-  ["claude-opus-5", "Claude Opus 5"],
-  ["claude-sonnet-5", "Claude Sonnet 5"],
-  ["claude-haiku-4-5", "Claude Haiku 4.5"],
-];
+function apiSection(keyStatus: Record<string, boolean>): HTMLElement {
+  const currentProviderId = settings.chatProvider || "anthropic";
+  const currentProvider = PROVIDERS.find((p) => p.id === currentProviderId) ?? PROVIDERS[0];
+  const hasKey = keyStatus[currentProvider.secretKey] ?? false;
 
-function apiSection(hasKey: boolean): HTMLElement {
-  const dot = statusDot(hasKey);
-  const state = h("span", { class: "hint", text: hasKey ? "Key saved in the Windows Credential Manager." : "No key yet — the chat needs one." });
-
-  const field = h("input", {
-    type: "password",
-    placeholder: hasKey ? "••••••••••••  (stored)" : "sk-ant-...",
-    style: "flex:1 1 auto;min-width:0",
-    autocomplete: "off",
-    spellcheck: "false",
-  }) as HTMLInputElement;
-
-  const saveBtn = h("button", { class: "primary", text: "Save key" });
-  const clearBtn = h("button", { class: "danger", text: "Remove" });
-  const feedback = h("div", {});
-
-  async function refresh() {
-    const present = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
-    dot.style.background = present ? "#22c55e" : "#f4505e";
-    state.textContent = present
-      ? "Key saved in the Windows Credential Manager."
-      : "No key yet — the chat needs one.";
-    field.placeholder = present ? "••••••••••••  (stored)" : "sk-ant-...";
-    clearBtn.style.display = present ? "" : "none";
-  }
-
-  saveBtn.addEventListener("click", async () => {
-    const value = field.value.trim();
-    if (!value) return;
-    clear(feedback);
-    try {
-      await Bridge.secretSet("anthropic-api-key", value);
-      field.value = "";
-      feedback.append(h("div", { class: "notice ok", text: "Saved. It never touches disk." }));
-      await refresh();
-    } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not save: ${String(err)}` }));
-    }
+  const headerDot = statusDot(hasKey);
+  const state = h("span", {
+    class: "hint",
+    text: hasKey
+      ? `Active: ${currentProvider.name} · Key stored.`
+      : `Active: ${currentProvider.name} · No API key configured.`,
   });
 
-  clearBtn.addEventListener("click", async () => {
-    clear(feedback);
-    try {
-      await Bridge.secretClear("anthropic-api-key");
-      feedback.append(h("div", { class: "notice ok", text: "Key removed." }));
-      await refresh();
-    } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
+  const providerSelect = h("select", {}) as HTMLSelectElement;
+  for (const p of PROVIDERS) {
+    providerSelect.append(h("option", { value: p.id, text: p.name }));
+  }
+  providerSelect.value = settings.chatProvider || "anthropic";
+
+  const modelSelect = h("select", {}) as HTMLSelectElement;
+
+  function getProviderModel(pId: string): string {
+    const p = PROVIDERS.find((x) => x.id === pId) ?? PROVIDERS[0];
+    if (pId === "openai") return settings.openaiModel || p.defaultModel;
+    if (pId === "google") return settings.googleModel || p.defaultModel;
+    if (pId === "deepseek") return settings.deepseekModel || p.defaultModel;
+    return settings.claudeModel || settings.model || p.defaultModel;
+  }
+
+  function updateModelOptions() {
+    clear(modelSelect);
+    const p = PROVIDERS.find((x) => x.id === providerSelect.value) ?? PROVIDERS[0];
+    const currentModel = getProviderModel(p.id);
+
+    for (const [id, label] of p.models) {
+      modelSelect.append(h("option", { value: id, text: label }));
     }
+    if (!p.models.some(([id]) => id === currentModel)) {
+      modelSelect.append(h("option", { value: currentModel, text: currentModel }));
+    }
+    modelSelect.value = currentModel;
+  }
+
+  updateModelOptions();
+
+  providerSelect.addEventListener("change", () => {
+    const newProv = providerSelect.value as ChatProviderId;
+    settings.chatProvider = newProv;
+    updateModelOptions();
+    const activeModel = getProviderModel(newProv);
+    settings.model = activeModel;
+    void save();
+    void updateHeaderStatus();
   });
 
-  const model = h("select", {}) as HTMLSelectElement;
-  for (const [id, label] of MODELS) model.append(h("option", { value: id, text: label }));
-  if (!MODELS.some(([id]) => id === settings.model)) {
-    model.append(h("option", { value: settings.model, text: settings.model }));
-  }
-  model.value = settings.model;
-  model.addEventListener("change", () => {
-    settings.model = model.value;
+  modelSelect.addEventListener("change", () => {
+    const selectedModel = modelSelect.value;
+    settings.model = selectedModel;
+    const curP = providerSelect.value;
+    if (curP === "openai") settings.openaiModel = selectedModel;
+    else if (curP === "google") settings.googleModel = selectedModel;
+    else if (curP === "deepseek") settings.deepseekModel = selectedModel;
+    else settings.claudeModel = selectedModel;
     void save();
   });
 
-  clearBtn.style.display = hasKey ? "" : "none";
+  const keyRows = h("div", { style: "display:flex;flex-direction:column;gap:10px;margin-top:4px" });
+  const refreshFns: (() => Promise<void>)[] = [];
+
+  for (const prov of PROVIDERS) {
+    const isPresent = keyStatus[prov.secretKey] ?? false;
+    const dot = statusDot(isPresent);
+    const field = h("input", {
+      type: "password",
+      placeholder: isPresent ? "••••••••••••  (stored)" : prov.keyPlaceholder,
+      style: "flex:1 1 auto;min-width:0",
+      autocomplete: "off",
+      spellcheck: "false",
+    }) as HTMLInputElement;
+
+    const saveBtn = h("button", { class: "primary", text: "Save" });
+    const clearBtn = h("button", { class: "danger", text: "Remove" });
+    clearBtn.style.display = isPresent ? "" : "none";
+    const feedback = h("div", {});
+
+    async function refreshOne() {
+      const present = (await Bridge.secretPresent(prov.secretKey)) ?? false;
+      keyStatus[prov.secretKey] = present;
+      dot.style.background = present ? "#22c55e" : "#f4505e";
+      field.placeholder = present ? "••••••••••••  (stored)" : prov.keyPlaceholder;
+      clearBtn.style.display = present ? "" : "none";
+    }
+    refreshFns.push(refreshOne);
+
+    saveBtn.addEventListener("click", async () => {
+      const value = field.value.trim();
+      if (!value) return;
+      clear(feedback);
+      try {
+        await Bridge.secretSet(prov.secretKey, value);
+        field.value = "";
+        feedback.append(h("div", { class: "notice ok", text: `${prov.shortName} key saved. It never touches disk.` }));
+        await refreshOne();
+        await updateHeaderStatus();
+      } catch (err) {
+        feedback.append(h("div", { class: "notice err", text: `Could not save: ${String(err)}` }));
+      }
+    });
+
+    clearBtn.addEventListener("click", async () => {
+      clear(feedback);
+      try {
+        await Bridge.secretClear(prov.secretKey);
+        feedback.append(h("div", { class: "notice ok", text: `${prov.shortName} key removed.` }));
+        await refreshOne();
+        await updateHeaderStatus();
+      } catch (err) {
+        feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
+      }
+    });
+
+    const provLabel = h("label", { style: "display:flex;align-items:center;gap:6px" },
+      dot,
+      h("span", { text: prov.shortName, style: `color:${prov.color};font-weight:600` }),
+    );
+
+    keyRows.append(
+      h("div", { class: "row" }, provLabel, field, saveBtn, clearBtn),
+      feedback,
+    );
+  }
+
+  async function updateHeaderStatus() {
+    const curP = PROVIDERS.find((p) => p.id === (settings.chatProvider || "anthropic")) ?? PROVIDERS[0];
+    const present = keyStatus[curP.secretKey] ?? false;
+    headerDot.style.background = present ? "#22c55e" : "#f4505e";
+    state.textContent = present
+      ? `Active: ${curP.name} · Key stored.`
+      : `Active: ${curP.name} · No API key configured.`;
+  }
 
   return h(
     "section",
     {},
-    h("h2", {}, dot, h("span", { text: "Claude" })),
+    h("h2", {}, headerDot, h("span", { text: "AI & Chat" })),
     state,
-    h("div", { class: "row" }, h("label", { text: "API key" }), field, saveBtn, clearBtn),
-    h("div", { class: "row" }, h("label", { text: "Model" }), model),
-    feedback,
+    h("div", { class: "row" }, h("label", { text: "Active provider" }), providerSelect),
+    h("div", { class: "row" }, h("label", { text: "Active model" }), modelSelect),
+    h("div", { class: "hint", style: "margin-top:6px;font-weight:500" }, h("span", { text: "API keys (Windows Credential Manager / Linux Secret Service)" })),
+    keyRows,
   );
 }
 
@@ -429,7 +501,9 @@ async function main() {
     installed: false, settingsPath: "", hookPath: "", hookReady: false,
   };
 
-  const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
+  const aiKeys = ["anthropic-api-key", "openai-api-key", "google-api-key", "deepseek-api-key"];
+  const aiPresent: Record<string, boolean> = {};
+  for (const k of aiKeys) aiPresent[k] = (await Bridge.secretPresent(k)) ?? false;
 
   const keys = [
     "stripe-api-key", "github-token", "vercel-token",
@@ -442,7 +516,7 @@ async function main() {
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
-    apiSection(hasKey),
+    apiSection(aiPresent),
     integrationsSection(present),
     generalSection(),
     h("div", {

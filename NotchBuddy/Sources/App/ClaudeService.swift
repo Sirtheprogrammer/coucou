@@ -64,6 +64,7 @@ final class KeychainStore: @unchecked Sendable {
         "anthropic-api-key",
         "google-api-key",
         "openai-api-key",
+        "deepseek-api-key",
         "resend-api-key", "resend-from",
         "n8n-url", "n8n-api-key",
         "vercel-token",
@@ -175,6 +176,22 @@ final class ClaudeService {
             .map { (id: $0.id, label: $0.id) }
     }
 
+    /// Fetches models from the DeepSeek API.
+    static func fetchDeepSeekModels(apiKey: String) async -> [(id: String, label: String)] {
+        guard let url = URL(string: "https://api.deepseek.com/models") else { return [] }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: req),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = json["data"] as? [[String: Any]] else { return [] }
+        return items.compactMap { item in
+            guard let id = item["id"] as? String else { return nil }
+            let label = id == "deepseek-chat" ? "DeepSeek-V3" : (id == "deepseek-reasoner" ? "DeepSeek-R1" : id)
+            return (id: id, label: label)
+        }
+    }
+
     /// Chosen in Settings; falls back to the default when the field is left empty.
     private var model: String {
         let m = AppState.shared.claudeModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -251,7 +268,7 @@ final class ClaudeService {
         }
     }
 
-    // MARK: - OpenAI-compatible chat (Google Gemini / OpenAI)
+    // MARK: - OpenAI-compatible chat (Google Gemini / OpenAI / DeepSeek)
 
     func chatOpenAICompatible(query: String, context: PromptContext?, state: AppState) async {
         let provider = state.chatProvider
@@ -263,8 +280,9 @@ final class ClaudeService {
 
         let baseURL: String
         switch provider {
-        case .google:  baseURL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        case .openai:  baseURL = "https://api.openai.com/v1/chat/completions"
+        case .google:   baseURL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        case .openai:   baseURL = "https://api.openai.com/v1/chat/completions"
+        case .deepseek: baseURL = "https://api.deepseek.com/chat/completions"
         case .anthropic: return
         }
         guard let url = URL(string: baseURL) else { return }
