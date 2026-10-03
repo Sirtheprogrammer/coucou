@@ -65,6 +65,7 @@ final class KeychainStore: @unchecked Sendable {
         "google-api-key",
         "openai-api-key",
         "deepseek-api-key",
+        "custom-api-key",
         "resend-api-key", "resend-from",
         "n8n-url", "n8n-api-key",
         "vercel-token",
@@ -142,12 +143,45 @@ final class ClaudeService {
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = json["data"] as? [[String: Any]] else { return [] }
-        let excluded = ["embed", "imagen", "veo", "aqa", "tts", "audio", "live"]
+        let excluded = ["embed", "imagen", "veo", "aqa", "tts", "audio", "live", "1.5"]
         return items.compactMap { item in
             guard let raw = item["id"] as? String else { return nil }
             let id = raw.hasPrefix("models/") ? String(raw.dropFirst(7)) : raw
             let lower = id.lowercased()
             guard !excluded.contains(where: { lower.contains($0) }) else { return nil }
+            return (id: id, label: id)
+        }
+        .sorted { a, b in
+            let aScore = a.id.contains("2.5") ? 2 : (a.id.contains("3.1") ? 3 : (a.id.contains("2.0") ? 1 : 0))
+            let bScore = b.id.contains("2.5") ? 2 : (b.id.contains("3.1") ? 3 : (b.id.contains("2.0") ? 1 : 0))
+            return aScore > bScore
+        }
+    }
+
+    /// Fetches models from a custom OpenAI-compatible endpoint.
+    static func fetchCustomModels(baseURL: String, apiKey: String?) async -> [(id: String, label: String)] {
+        var u = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if u.isEmpty { u = "http://localhost:11434/v1" }
+        while u.hasSuffix("/") { u.removeLast() }
+        let modelsURL: String
+        if u.hasSuffix("/v1") {
+            modelsURL = u + "/models"
+        } else if u.hasSuffix("/chat/completions") {
+            modelsURL = u.replacingOccurrences(of: "/chat/completions", with: "/models")
+        } else {
+            modelsURL = u + "/v1/models"
+        }
+        guard let url = URL(string: modelsURL) else { return [] }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        if let key = apiKey, !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        guard let (data, response) = try? await URLSession.shared.data(for: req),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = json["data"] as? [[String: Any]] else { return [] }
+        return items.compactMap { item in
+            guard let id = item["id"] as? String else { return nil }
             return (id: id, label: id)
         }
     }
@@ -273,7 +307,8 @@ final class ClaudeService {
     func chatOpenAICompatible(query: String, context: PromptContext?, state: AppState) async {
         let provider = state.chatProvider
         guard provider != .anthropic else { return }
-        guard let key = KeychainStore.shared.get(provider.keychainKey), !key.isEmpty else {
+        let key = KeychainStore.shared.get(provider.keychainKey)
+        if provider != .custom, (key == nil || key!.isEmpty) {
             await showError("\(provider.displayName) API key missing. Configure it in Settings.", state: state)
             return
         }
@@ -283,6 +318,17 @@ final class ClaudeService {
         case .google:   baseURL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         case .openai:   baseURL = "https://api.openai.com/v1/chat/completions"
         case .deepseek: baseURL = "https://api.deepseek.com/chat/completions"
+        case .custom:
+            var u = state.customOpenAIUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if u.isEmpty { u = "http://localhost:11434/v1" }
+            while u.hasSuffix("/") { u.removeLast() }
+            if u.hasSuffix("/chat/completions") {
+                baseURL = u
+            } else if u.hasSuffix("/v1") {
+                baseURL = u + "/chat/completions"
+            } else {
+                baseURL = u + "/v1/chat/completions"
+            }
         case .anthropic: return
         }
         guard let url = URL(string: baseURL) else { return }
@@ -323,7 +369,9 @@ final class ClaudeService {
         var req = URLRequest(url: url, timeoutInterval: 30)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        if let k = key, !k.isEmpty {
+            req.setValue("Bearer \(k)", forHTTPHeaderField: "Authorization")
+        }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         do {

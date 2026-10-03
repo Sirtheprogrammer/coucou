@@ -81,7 +81,7 @@ export interface IntegrationInfo {
   configured: boolean;
 }
 
-export type ChatProviderId = "anthropic" | "openai" | "google" | "deepseek";
+export type ChatProviderId = "anthropic" | "openai" | "google" | "deepseek" | "custom";
 
 export interface ProviderDef {
   id: ChatProviderId;
@@ -106,9 +106,9 @@ export const PROVIDERS: ProviderDef[] = [
     models: [
       ["claude-opus-5", "Claude Opus 5"],
       ["claude-sonnet-5", "Claude Sonnet 5"],
-      ["claude-haiku-4-5", "Claude Haiku 4.5"],
       ["claude-3-7-sonnet-latest", "Claude 3.7 Sonnet"],
       ["claude-3-5-sonnet-latest", "Claude 3.5 Sonnet"],
+      ["claude-3-5-haiku-latest", "Claude 3.5 Haiku"],
     ],
   },
   {
@@ -121,10 +121,10 @@ export const PROVIDERS: ProviderDef[] = [
     defaultModel: "gpt-4o",
     models: [
       ["gpt-4o", "GPT-4o"],
-      ["gpt-4o-mini", "GPT-4o mini"],
+      ["gpt-4.5-preview", "GPT-4.5 Preview"],
       ["o3-mini", "o3-mini"],
       ["o1", "o1"],
-      ["gpt-4-turbo", "GPT-4 Turbo"],
+      ["gpt-4o-mini", "GPT-4o mini"],
     ],
   },
   {
@@ -134,13 +134,13 @@ export const PROVIDERS: ProviderDef[] = [
     color: "#4285F4",
     secretKey: "google-api-key",
     keyPlaceholder: "AIzaSy...",
-    defaultModel: "gemini-2.0-flash",
+    defaultModel: "gemini-2.5-flash",
     models: [
-      ["gemini-2.0-flash", "Gemini 2.0 Flash"],
       ["gemini-2.5-pro", "Gemini 2.5 Pro"],
       ["gemini-2.5-flash", "Gemini 2.5 Flash"],
-      ["gemini-1.5-pro", "Gemini 1.5 Pro"],
-      ["gemini-1.5-flash", "Gemini 1.5 Flash"],
+      ["gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"],
+      ["gemini-2.0-flash", "Gemini 2.0 Flash"],
+      ["gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite"],
     ],
   },
   {
@@ -156,6 +156,21 @@ export const PROVIDERS: ProviderDef[] = [
       ["deepseek-reasoner", "DeepSeek-R1 (Reasoner)"],
     ],
   },
+  {
+    id: "custom",
+    name: "Custom (OpenAI-compatible)",
+    shortName: "Custom",
+    color: "#8E8E93",
+    secretKey: "custom-api-key",
+    keyPlaceholder: "Optional API key (sk-...)",
+    defaultModel: "llama3.3:70b",
+    models: [
+      ["llama3.3:70b", "Llama 3.3 70B"],
+      ["deepseek-r1", "DeepSeek R1"],
+      ["qwen2.5:72b", "Qwen 2.5 72B"],
+      ["mistral-large-latest", "Mistral Large"],
+    ],
+  },
 ];
 
 export function getActiveModel(settings: Settings): string {
@@ -163,9 +178,11 @@ export function getActiveModel(settings: Settings): string {
     case "openai":
       return settings.openaiModel || "gpt-4o";
     case "google":
-      return settings.googleModel || "gemini-2.0-flash";
+      return settings.googleModel || "gemini-2.5-flash";
     case "deepseek":
       return settings.deepseekModel || "deepseek-chat";
+    case "custom":
+      return settings.customModel || "llama3.3:70b";
     default:
       return settings.claudeModel || settings.model || "claude-opus-5";
   }
@@ -187,6 +204,10 @@ export interface Settings {
   openaiModel: string;
   googleModel: string;
   deepseekModel: string;
+  customModel: string;
+  customUrl: string;
+  customName: string;
+  alwaysOnTop: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -204,8 +225,12 @@ export const DEFAULT_SETTINGS: Settings = {
   model: "claude-opus-5",
   claudeModel: "claude-opus-5",
   openaiModel: "gpt-4o",
-  googleModel: "gemini-2.0-flash",
+  googleModel: "gemini-2.5-flash",
   deepseekModel: "deepseek-chat",
+  customModel: "llama3.3:70b",
+  customUrl: "http://localhost:11434/v1",
+  customName: "Custom",
+  alwaysOnTop: true,
 };
 
 type Listener = () => void;

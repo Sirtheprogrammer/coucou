@@ -177,6 +177,8 @@ struct OverviewView: View {
             switchChatProvider(.openai)
         case "ai_deepseek":
             switchChatProvider(.deepseek)
+        case "ai_custom":
+            switchChatProvider(.custom)
         default:
             // Non-integration real tasks
             if task.source == .n8n {
@@ -881,11 +883,10 @@ struct PromptView: View {
 }
 
 
-// MARK: - Model / provider picker
-
 struct ModelPickerView: View {
     @ObservedObject var state: AppState
     @Binding var isPresented: Bool
+    @State private var customModelText: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -927,14 +928,58 @@ struct ModelPickerView: View {
 
             // Model list for current provider — fetched dynamically
             modelListView
-                .frame(height: 260, alignment: .top)
+                .frame(height: 230, alignment: .top)
+
+            Divider().opacity(0.2)
+
+            // Custom model input row
+            HStack(spacing: 6) {
+                TextField("Custom model ID (e.g. gemini-2.5-pro)", text: $customModelText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .onSubmit { applyCustomModel() }
+
+                Button("Set") {
+                    applyCustomModel()
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Color(hex: state.chatProvider.accentHex))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color(hex: state.chatProvider.accentHex).opacity(0.18))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .buttonStyle(.plain)
+            }
         }
         .padding(14)
         .background(Color(hex: "#16171B"))
-        .onAppear { state.fetchModelsIfNeeded(for: state.chatProvider) }
+        .onAppear {
+            customModelText = state.activeChatModel
+            state.fetchModelsIfNeeded(for: state.chatProvider)
+        }
         .onChange(of: state.chatProvider) { _, provider in
+            customModelText = state.activeChatModel
             state.fetchModelsIfNeeded(for: provider)
         }
+    }
+
+    private func applyCustomModel() {
+        let trimmed = customModelText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        switch state.chatProvider {
+        case .anthropic: state.claudeModel = trimmed
+        case .google:    state.googleChatModel = trimmed
+        case .openai:    state.openAIChatModel = trimmed
+        case .deepseek:  state.deepSeekChatModel = trimmed
+        case .custom:    state.customChatModel = trimmed
+        }
+        isPresented = false
+        SoundEngine.shared.play("blip")
     }
 
     @ViewBuilder
@@ -963,6 +1008,7 @@ struct ModelPickerView: View {
                             case .google:    state.googleChatModel = model.id
                             case .openai:    state.openAIChatModel = model.id
                             case .deepseek:  state.deepSeekChatModel = model.id
+                            case .custom:    state.customChatModel = model.id
                             }
                             isPresented = false
                             SoundEngine.shared.play("blip")
@@ -1417,12 +1463,13 @@ struct IntegrationCardView: View {
                             .buttonStyle(.plain)
                         }
                         #endif
-                    } else if task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai" || task.id == "ai_deepseek" {
-                        if isConfigured {
+                    } else if task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai" || task.id == "ai_deepseek" || task.id == "ai_custom" {
+                        if isConfigured || task.id == "ai_custom" {
                             let provider: ChatProvider = task.id == "ai_anthropic" ? .anthropic
                                                        : task.id == "ai_google"    ? .google
                                                        : task.id == "ai_openai"    ? .openai
-                                                       :                             .deepseek
+                                                       : task.id == "ai_deepseek"  ? .deepseek
+                                                       :                             .custom
                             Button("Chat with \(task.name)") {
                                 switchChatProvider(provider)
                             }
@@ -3006,6 +3053,22 @@ struct SettingsIslandView: View {
                     Slider(value: $state.soundVolume, in: 0...0.2)
                         .frame(width: 72)
                         .opacity(state.soundEnabled ? 1 : 0.4)
+                }
+
+                // Stay on top row
+                HStack(spacing: 10) {
+                    Toggle("", isOn: $state.alwaysOnTop)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .scaleEffect(0.75)
+                        .frame(width: 44)
+                    Text("Stay on top")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Color(hex: "#C5C8CD"))
+                    Spacer()
+                    Text(state.alwaysOnTop ? "Pinned" : "Normal")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "#8E939C"))
                 }
 
                 // Auto-close row

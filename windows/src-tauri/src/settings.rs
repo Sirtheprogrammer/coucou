@@ -31,6 +31,18 @@ pub struct Settings {
     pub google_model: String,
     #[serde(default = "default_deepseek_model")]
     pub deepseek_model: String,
+    #[serde(default = "default_custom_model")]
+    pub custom_model: String,
+    #[serde(default = "default_custom_url")]
+    pub custom_url: String,
+    #[serde(default = "default_custom_name")]
+    pub custom_name: String,
+    #[serde(default = "default_always_on_top")]
+    pub always_on_top: bool,
+}
+
+fn default_always_on_top() -> bool {
+    true
 }
 
 fn default_chat_provider() -> String {
@@ -50,11 +62,23 @@ fn default_openai_model() -> String {
 }
 
 fn default_google_model() -> String {
-    "gemini-2.0-flash".to_string()
+    "gemini-2.5-flash".to_string()
 }
 
 fn default_deepseek_model() -> String {
     "deepseek-chat".to_string()
+}
+
+fn default_custom_model() -> String {
+    "llama3.3:70b".to_string()
+}
+
+fn default_custom_url() -> String {
+    "http://localhost:11434/v1".to_string()
+}
+
+fn default_custom_name() -> String {
+    "Custom".to_string()
 }
 
 impl Default for Settings {
@@ -79,6 +103,10 @@ impl Default for Settings {
             openai_model: default_openai_model(),
             google_model: default_google_model(),
             deepseek_model: default_deepseek_model(),
+            custom_model: default_custom_model(),
+            custom_url: default_custom_url(),
+            custom_name: default_custom_name(),
+            always_on_top: default_always_on_top(),
         }
     }
 }

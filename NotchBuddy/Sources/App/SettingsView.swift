@@ -8,11 +8,37 @@ struct SettingsView: View {
 
     // Claude model — dynamic list fetched from the API, static fallback if unavailable
     private static let fallbackModels: [(id: String, label: String)] = [
-        ("claude-sonnet-4-6",         "Claude Sonnet 4.6"),
-        ("claude-sonnet-5-5",         "Claude Sonnet 5.5"),
-        ("claude-opus-5-5",           "Claude Opus 5.5"),
-        ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+        ("claude-opus-5",             "Claude Opus 5"),
+        ("claude-sonnet-5",           "Claude Sonnet 5"),
+        ("claude-3-7-sonnet-latest",  "Claude 3.7 Sonnet"),
+        ("claude-3-5-sonnet-latest",  "Claude 3.5 Sonnet"),
+        ("claude-3-5-haiku-latest",   "Claude 3.5 Haiku"),
     ]
+    private static let googlePresets: [(id: String, label: String)] = [
+        ("gemini-2.5-flash",        "Gemini 2.5 Flash"),
+        ("gemini-2.5-pro",          "Gemini 2.5 Pro"),
+        ("gemini-3.1-pro-preview",  "Gemini 3.1 Pro Preview"),
+        ("gemini-2.0-flash",        "Gemini 2.0 Flash"),
+        ("gemini-2.5-flash-lite",   "Gemini 2.5 Flash Lite"),
+    ]
+    private static let openAIPresets: [(id: String, label: String)] = [
+        ("gpt-4o",          "GPT-4o"),
+        ("gpt-4.5-preview", "GPT-4.5 Preview"),
+        ("o3-mini",         "o3-mini"),
+        ("o1",              "o1"),
+        ("gpt-4o-mini",     "GPT-4o mini"),
+    ]
+    private static let deepSeekPresets: [(id: String, label: String)] = [
+        ("deepseek-chat",     "DeepSeek-V3"),
+        ("deepseek-reasoner", "DeepSeek-R1"),
+    ]
+    private static let customPresets: [(id: String, label: String)] = [
+        ("llama3.3:70b",         "Llama 3.3 70B"),
+        ("deepseek-r1",          "DeepSeek R1"),
+        ("qwen2.5:72b",          "Qwen 2.5 72B"),
+        ("mistral-large-latest", "Mistral Large"),
+    ]
+
     private static let customModelTag = "__custom__"
     @State private var fetchedModels: [(id: String, label: String)] = []
     @State private var modelChoice: String = {
@@ -23,6 +49,43 @@ struct SettingsView: View {
         let m = AppState.shared.claudeModel
         return SettingsView.fallbackModels.contains { $0.id == m } ? "" : m
     }()
+
+    @State private var googleModelChoice: String = {
+        let m = AppState.shared.googleChatModel
+        return SettingsView.googlePresets.contains { $0.id == m } ? m : SettingsView.customModelTag
+    }()
+    @State private var customGoogleModel: String = {
+        let m = AppState.shared.googleChatModel
+        return SettingsView.googlePresets.contains { $0.id == m } ? "" : m
+    }()
+
+    @State private var openAIModelChoice: String = {
+        let m = AppState.shared.openAIChatModel
+        return SettingsView.openAIPresets.contains { $0.id == m } ? m : SettingsView.customModelTag
+    }()
+    @State private var customOpenAIModel: String = {
+        let m = AppState.shared.openAIChatModel
+        return SettingsView.openAIPresets.contains { $0.id == m } ? "" : m
+    }()
+
+    @State private var deepSeekModelChoice: String = {
+        let m = AppState.shared.deepSeekChatModel
+        return SettingsView.deepSeekPresets.contains { $0.id == m } ? m : SettingsView.customModelTag
+    }()
+    @State private var customDeepSeekModel: String = {
+        let m = AppState.shared.deepSeekChatModel
+        return SettingsView.deepSeekPresets.contains { $0.id == m } ? "" : m
+    }()
+
+    @State private var customModelChoice: String = {
+        let m = AppState.shared.customChatModel
+        return SettingsView.customPresets.contains { $0.id == m } ? m : SettingsView.customModelTag
+    }()
+    @State private var customCustomModel: String = {
+        let m = AppState.shared.customChatModel
+        return SettingsView.customPresets.contains { $0.id == m } ? "" : m
+    }()
+
     private var displayModels: [(id: String, label: String)] {
         fetchedModels.isEmpty ? Self.fallbackModels : fetchedModels
     }
@@ -49,10 +112,12 @@ struct SettingsView: View {
     @State private var codexPendingInstall: Bool = true
     #endif
 
-    // Multi-provider chat keys
+    // Multi-provider chat keys & custom endpoint
     @State private var googleKey: String   = KeychainStore.shared.get("google-api-key") ?? ""
     @State private var openAIKey: String   = KeychainStore.shared.get("openai-api-key") ?? ""
     @State private var deepSeekKey: String = KeychainStore.shared.get("deepseek-api-key") ?? ""
+    @State private var customKey: String   = KeychainStore.shared.get("custom-api-key") ?? ""
+    @State private var customUrl: String   = AppState.shared.customOpenAIUrl
 
     // Integration keys
     @State private var resendKey: String    = KeychainStore.shared.get("resend-api-key")  ?? ""
@@ -131,49 +196,162 @@ struct SettingsView: View {
 
                 GroupBox("Chat — other providers") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("To use Google Gemini, OpenAI, or DeepSeek from the chat. Keys are stored in the Keychain.")
+                        Text("To use Google Gemini, OpenAI, DeepSeek, or custom OpenAI-compatible models from the chat. Keys are stored in the Keychain.")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
 
+                        // ── Google AI ──
                         HStack(spacing: 8) {
                             Circle().fill(Color(hex: "#4285F4")).frame(width: 8, height: 8)
-                            Text("Google AI").font(.system(size: 12, weight: .semibold))
+                            Text("Google AI (Gemini)").font(.system(size: 12, weight: .semibold))
                         }
                         SecureField("API key (AI Studio)", text: $googleKey)
                             .textFieldStyle(.roundedBorder)
-                        Button("Save") {
-                            KeychainStore.shared.set("google-api-key", value: googleKey)
-                            statusMessage = "✓ Google key saved."
+                        HStack {
+                            Button("Save key") {
+                                KeychainStore.shared.set("google-api-key", value: googleKey)
+                                statusMessage = "✓ Google key saved."
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Spacer()
                         }
-                        .buttonStyle(.borderedProminent)
+                        Picker("Model", selection: $googleModelChoice) {
+                            ForEach(Self.googlePresets, id: \.id) { preset in
+                                Text(preset.label).tag(preset.id)
+                            }
+                            Text("Custom…").tag(Self.customModelTag)
+                        }
+                        .onChange(of: googleModelChoice) { _, choice in
+                            if choice != Self.customModelTag {
+                                state.googleChatModel = choice
+                            } else {
+                                applyCustomGoogleModel(customGoogleModel)
+                            }
+                        }
+                        if googleModelChoice == Self.customModelTag {
+                            TextField("Model ID (e.g. gemini-2.5-pro)", text: $customGoogleModel)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: customGoogleModel) { _, val in applyCustomGoogleModel(val) }
+                        }
 
                         Divider()
 
+                        // ── OpenAI ──
                         HStack(spacing: 8) {
                             Circle().fill(Color(hex: "#10A37F")).frame(width: 8, height: 8)
-                            Text("OpenAI").font(.system(size: 12, weight: .semibold))
+                            Text("OpenAI (ChatGPT)").font(.system(size: 12, weight: .semibold))
                         }
                         SecureField("API key (sk-…)", text: $openAIKey)
                             .textFieldStyle(.roundedBorder)
-                        Button("Save") {
-                            KeychainStore.shared.set("openai-api-key", value: openAIKey)
-                            statusMessage = "✓ OpenAI key saved."
+                        HStack {
+                            Button("Save key") {
+                                KeychainStore.shared.set("openai-api-key", value: openAIKey)
+                                statusMessage = "✓ OpenAI key saved."
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Spacer()
                         }
-                        .buttonStyle(.borderedProminent)
+                        Picker("Model", selection: $openAIModelChoice) {
+                            ForEach(Self.openAIPresets, id: \.id) { preset in
+                                Text(preset.label).tag(preset.id)
+                            }
+                            Text("Custom…").tag(Self.customModelTag)
+                        }
+                        .onChange(of: openAIModelChoice) { _, choice in
+                            if choice != Self.customModelTag {
+                                state.openAIChatModel = choice
+                            } else {
+                                applyCustomOpenAIModel(customOpenAIModel)
+                            }
+                        }
+                        if openAIModelChoice == Self.customModelTag {
+                            TextField("Model ID (e.g. gpt-4.5-preview)", text: $customOpenAIModel)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: customOpenAIModel) { _, val in applyCustomOpenAIModel(val) }
+                        }
 
                         Divider()
 
+                        // ── DeepSeek ──
                         HStack(spacing: 8) {
                             Circle().fill(Color(hex: "#4D6BFE")).frame(width: 8, height: 8)
                             Text("DeepSeek").font(.system(size: 12, weight: .semibold))
                         }
                         SecureField("API key (sk-…)", text: $deepSeekKey)
                             .textFieldStyle(.roundedBorder)
-                        Button("Save") {
-                            KeychainStore.shared.set("deepseek-api-key", value: deepSeekKey)
-                            statusMessage = "✓ DeepSeek key saved."
+                        HStack {
+                            Button("Save key") {
+                                KeychainStore.shared.set("deepseek-api-key", value: deepSeekKey)
+                                statusMessage = "✓ DeepSeek key saved."
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Spacer()
                         }
-                        .buttonStyle(.borderedProminent)
+                        Picker("Model", selection: $deepSeekModelChoice) {
+                            ForEach(Self.deepSeekPresets, id: \.id) { preset in
+                                Text(preset.label).tag(preset.id)
+                            }
+                            Text("Custom…").tag(Self.customModelTag)
+                        }
+                        .onChange(of: deepSeekModelChoice) { _, choice in
+                            if choice != Self.customModelTag {
+                                state.deepSeekChatModel = choice
+                            } else {
+                                applyCustomDeepSeekModel(customDeepSeekModel)
+                            }
+                        }
+                        if deepSeekModelChoice == Self.customModelTag {
+                            TextField("Model ID (e.g. deepseek-chat)", text: $customDeepSeekModel)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: customDeepSeekModel) { _, val in applyCustomDeepSeekModel(val) }
+                        }
+
+                        Divider()
+
+                        // ── Custom (OpenAI-compatible) ──
+                        HStack(spacing: 8) {
+                            Circle().fill(Color(hex: "#8E8E93")).frame(width: 8, height: 8)
+                            Text("Custom (OpenAI-compatible)").font(.system(size: 12, weight: .semibold))
+                        }
+                        Text("For local servers (Ollama, LM Studio, vLLM) or proxy endpoints (OpenRouter, Groq). API key is optional.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        TextField("Endpoint URL (e.g. http://localhost:11434/v1)", text: $customUrl)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: customUrl) { _, val in
+                                state.customOpenAIUrl = val.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+
+                        SecureField("API key (optional)", text: $customKey)
+                            .textFieldStyle(.roundedBorder)
+                        HStack {
+                            Button("Save key") {
+                                KeychainStore.shared.set("custom-api-key", value: customKey)
+                                statusMessage = "✓ Custom key saved."
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Spacer()
+                        }
+
+                        Picker("Model", selection: $customModelChoice) {
+                            ForEach(Self.customPresets, id: \.id) { preset in
+                                Text(preset.label).tag(preset.id)
+                            }
+                            Text("Custom…").tag(Self.customModelTag)
+                        }
+                        .onChange(of: customModelChoice) { _, choice in
+                            if choice != Self.customModelTag {
+                                state.customChatModel = choice
+                            } else {
+                                applyCustomCustomModel(customCustomModel)
+                            }
+                        }
+                        if customModelChoice == Self.customModelTag {
+                            TextField("Model ID (e.g. llama3.3:70b)", text: $customCustomModel)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: customCustomModel) { _, val in applyCustomCustomModel(val) }
+                        }
                     }
                     .padding(.vertical, 4)
                 }
@@ -457,9 +635,16 @@ struct SettingsView: View {
                     .padding(6)
                 }
 
-                // MARK: Timings
+                // MARK: Timings & Window Layer
                 GroupBox("Behavior") {
                     VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Stay on top of other apps (pin)", isOn: $state.alwaysOnTop)
+                        Text("Keep the island above other windows. When unpinned, other active windows can cover it.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        Divider().padding(.vertical, 2)
+
                         HStack(spacing: 8) {
                             Text("Close after")
                             TextField("60", value: $state.autoCloseInterval, format: .number)
@@ -577,11 +762,29 @@ struct SettingsView: View {
         .frame(minWidth: 420, maxWidth: .infinity, minHeight: 320, maxHeight: .infinity)
     }
 
-    // MARK: - Actions
-
     private func applyCustomModel(_ value: String) {
         let id = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if !id.isEmpty { state.claudeModel = id }
+    }
+
+    private func applyCustomGoogleModel(_ value: String) {
+        let id = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty { state.googleChatModel = id }
+    }
+
+    private func applyCustomOpenAIModel(_ value: String) {
+        let id = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty { state.openAIChatModel = id }
+    }
+
+    private func applyCustomDeepSeekModel(_ value: String) {
+        let id = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty { state.deepSeekChatModel = id }
+    }
+
+    private func applyCustomCustomModel(_ value: String) {
+        let id = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty { state.customChatModel = id }
     }
 
     private func toggleStartup(_ on: Bool) {

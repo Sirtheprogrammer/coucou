@@ -61,12 +61,13 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
-    let (screen_changed, autostart_changed) = {
+    let (screen_changed, autostart_changed, always_on_top_changed) = {
         let mut current = shared.settings.lock().unwrap();
         let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
+        let always_on_top_changed = current.always_on_top != settings.always_on_top;
         *current = settings.clone();
-        (screen_changed, autostart_changed)
+        (screen_changed, autostart_changed, always_on_top_changed)
     };
     if let Err(err) = settings::save(&settings) {
         eprintln!("[coucou] could not save settings: {err}");
@@ -76,6 +77,11 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
         if let Err(err) = result {
             eprintln!("[coucou] autostart: {err}");
+        }
+    }
+    if always_on_top_changed {
+        if let Some(win) = island::window(&app) {
+            let _ = win.set_always_on_top(settings.always_on_top);
         }
     }
     if screen_changed {
@@ -265,6 +271,13 @@ async fn chat_send(
                 settings.model
             }
         }
+        "custom" => {
+            if !settings.custom_model.is_empty() {
+                settings.custom_model
+            } else {
+                settings.model
+            }
+        }
         _ => {
             if !settings.claude_model.is_empty() {
                 settings.claude_model
@@ -273,7 +286,7 @@ async fn chat_send(
             }
         }
     };
-    claude::send(&chat, &provider, &model, query, context).await
+    claude::send(&chat, &provider, &model, &settings.custom_url, query, context).await
 }
 
 #[tauri::command]

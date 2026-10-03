@@ -75,7 +75,9 @@ final class IslandWindowController: NSWindowController {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 3)
+        panel.level = AppState.shared.alwaysOnTop
+            ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 3)
+            : .normal
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.ignoresMouseEvents = true
 
@@ -190,6 +192,16 @@ final class IslandWindowController: NSWindowController {
             forName: .greetComplete, object: nil, queue: .main
         ) { [weak self] _ in
             self?.fsm.greetComplete()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .alwaysOnTopChanged, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let panel = self.islandPanel else { return }
+            let isPinned = (note.object as? Bool) ?? AppState.shared.alwaysOnTop
+            panel.level = isPinned
+                ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 3)
+                : .normal
         }
 
         fsm.isHeldOpen = { AppState.shared.pendingApproval != nil }
@@ -863,6 +875,7 @@ extension Notification.Name {
     static let islandCollapse   = Notification.Name("notchBuddy.islandCollapse")
     static let openFullSettings = Notification.Name("notchBuddy.openFullSettings")
     static let hookReveal       = Notification.Name("notchBuddy.hookReveal")
+    static let alwaysOnTopChanged = Notification.Name("notchBuddy.alwaysOnTopChanged")
     // Greeting ↔ IslandWindowController
     static let greetComplete    = Notification.Name("notchBuddy.greetComplete")
     static let greetingHover    = Notification.Name("notchBuddy.greetingHover")

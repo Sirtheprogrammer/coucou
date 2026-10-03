@@ -74,6 +74,7 @@ enum ChatProvider: String, CaseIterable, Codable {
     case google    = "google"
     case openai    = "openai"
     case deepseek  = "deepseek"
+    case custom    = "custom"
 
     var displayName: String {
         switch self {
@@ -81,6 +82,7 @@ enum ChatProvider: String, CaseIterable, Codable {
         case .google:    "Google"
         case .openai:    "OpenAI"
         case .deepseek:  "DeepSeek"
+        case .custom:    "Custom"
         }
     }
 
@@ -90,15 +92,17 @@ enum ChatProvider: String, CaseIterable, Codable {
         case .google:    "#4285F4"
         case .openai:    "#10A37F"
         case .deepseek:  "#4D6BFE"
+        case .custom:    "#8E8E93"
         }
     }
 
     var defaultModel: String {
         switch self {
-        case .anthropic: "claude-sonnet-4-6"
-        case .google:    "gemini-2.0-flash"
+        case .anthropic: "claude-opus-5"
+        case .google:    "gemini-2.5-flash"
         case .openai:    "gpt-4o"
         case .deepseek:  "deepseek-chat"
+        case .custom:    "llama3.3:70b"
         }
     }
 
@@ -108,6 +112,7 @@ enum ChatProvider: String, CaseIterable, Codable {
         case .google:    "google-api-key"
         case .openai:    "openai-api-key"
         case .deepseek:  "deepseek-api-key"
+        case .custom:    "custom-api-key"
         }
     }
 }

@@ -153,6 +153,11 @@ export class Island {
         void Bridge.saveSettings(State.settings);
         State.notify();
       },
+      toggleAlwaysOnTop: () => {
+        State.settings.alwaysOnTop = !(State.settings.alwaysOnTop ?? true);
+        void Bridge.saveSettings(State.settings);
+        State.notify();
+      },
       setVolume: (v) => {
         State.settings.soundVolume = v;
         Sound.setVolume(v);

@@ -174,7 +174,11 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let _ = win.set_position(PhysicalPosition::new(x, y));
     // Moving across displays can rescale the window: re-assert the physical size.
     let _ = win.set_size(PhysicalSize::new(pw, ph));
-    let _ = win.set_always_on_top(true);
+    let always_on_top = app
+        .try_state::<crate::Shared>()
+        .map(|s| s.settings.lock().unwrap().always_on_top)
+        .unwrap_or(true);
+    let _ = win.set_always_on_top(always_on_top);
 }
 
 /// Position, size and scale of the monitor the island lives on. Any change here

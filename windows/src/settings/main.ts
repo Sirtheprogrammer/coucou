@@ -194,26 +194,79 @@ function apiSection(keyStatus: Record<string, boolean>): HTMLElement {
 
   const modelSelect = h("select", {}) as HTMLSelectElement;
 
+  const CUSTOM_TAG = "__custom__";
+  const customModelInput = h("input", {
+    type: "text",
+    placeholder: "Enter custom model ID (e.g. gemini-2.5-pro or llama3.3:70b)",
+    style: "flex:1 1 auto;min-width:0",
+    autocomplete: "off",
+    spellcheck: "false",
+  }) as HTMLInputElement;
+  const customModelRow = h("div", { class: "row", style: "display:none" },
+    h("label", { text: "Model ID" }),
+    customModelInput,
+  );
+
+  const customUrlInput = h("input", {
+    type: "text",
+    placeholder: "http://localhost:11434/v1",
+    value: settings.customUrl || "http://localhost:11434/v1",
+    style: "flex:1 1 auto;min-width:0",
+    autocomplete: "off",
+    spellcheck: "false",
+  }) as HTMLInputElement;
+  const customUrlRow = h("div", { class: "row", style: "display:none" },
+    h("label", { text: "Endpoint URL" }),
+    customUrlInput,
+  );
+  const customHint = h("div", {
+    class: "hint",
+    style: "display:none;margin-top:2px",
+    text: "Compatible with Ollama, LM Studio, vLLM, OpenRouter, etc. API key below is optional for local servers.",
+  });
+
   function getProviderModel(pId: string): string {
     const p = PROVIDERS.find((x) => x.id === pId) ?? PROVIDERS[0];
     if (pId === "openai") return settings.openaiModel || p.defaultModel;
     if (pId === "google") return settings.googleModel || p.defaultModel;
     if (pId === "deepseek") return settings.deepseekModel || p.defaultModel;
+    if (pId === "custom") return settings.customModel || p.defaultModel;
     return settings.claudeModel || settings.model || p.defaultModel;
+  }
+
+  function setProviderModel(pId: string, modelName: string) {
+    settings.model = modelName;
+    if (pId === "openai") settings.openaiModel = modelName;
+    else if (pId === "google") settings.googleModel = modelName;
+    else if (pId === "deepseek") settings.deepseekModel = modelName;
+    else if (pId === "custom") settings.customModel = modelName;
+    else settings.claudeModel = modelName;
+    void save();
   }
 
   function updateModelOptions() {
     clear(modelSelect);
     const p = PROVIDERS.find((x) => x.id === providerSelect.value) ?? PROVIDERS[0];
     const currentModel = getProviderModel(p.id);
+    const isPreset = p.models.some(([id]) => id === currentModel);
 
     for (const [id, label] of p.models) {
       modelSelect.append(h("option", { value: id, text: label }));
     }
-    if (!p.models.some(([id]) => id === currentModel)) {
-      modelSelect.append(h("option", { value: currentModel, text: currentModel }));
+    modelSelect.append(h("option", { value: CUSTOM_TAG, text: "Custom model…" }));
+
+    if (isPreset) {
+      modelSelect.value = currentModel;
+      customModelRow.style.display = "none";
+    } else {
+      modelSelect.value = CUSTOM_TAG;
+      customModelInput.value = currentModel;
+      customModelRow.style.display = "";
     }
-    modelSelect.value = currentModel;
+
+    const isCustomProv = p.id === "custom";
+    customUrlRow.style.display = isCustomProv ? "" : "none";
+    customHint.style.display = isCustomProv ? "" : "none";
   }
 
   updateModelOptions();
@@ -229,13 +282,29 @@ function apiSection(keyStatus: Record<string, boolean>): HTMLElement {
   });
 
   modelSelect.addEventListener("change", () => {
-    const selectedModel = modelSelect.value;
-    settings.model = selectedModel;
     const curP = providerSelect.value;
-    if (curP === "openai") settings.openaiModel = selectedModel;
-    else if (curP === "google") settings.googleModel = selectedModel;
-    else if (curP === "deepseek") settings.deepseekModel = selectedModel;
-    else settings.claudeModel = selectedModel;
+    if (modelSelect.value === CUSTOM_TAG) {
+      customModelRow.style.display = "";
+      customModelInput.focus();
+      const val = customModelInput.value.trim() || getProviderModel(curP);
+      customModelInput.value = val;
+      setProviderModel(curP, val);
+    } else {
+      customModelRow.style.display = "none";
+      setProviderModel(curP, modelSelect.value);
+    }
+  });
+
+  customModelInput.addEventListener("input", () => {
+    const curP = providerSelect.value;
+    const val = customModelInput.value.trim();
+    if (val) {
+      setProviderModel(curP, val);
+    }
+  });
+
+  customUrlInput.addEventListener("change", () => {
+    settings.customUrl = customUrlInput.value.trim() || "http://localhost:11434/v1";
     void save();
   });
 
@@ -244,7 +313,8 @@ function apiSection(keyStatus: Record<string, boolean>): HTMLElement {
 
   for (const prov of PROVIDERS) {
     const isPresent = keyStatus[prov.secretKey] ?? false;
-    const dot = statusDot(isPresent);
+    const isCustom = prov.id === "custom";
+    const dot = statusDot(isPresent || isCustom);
     const field = h("input", {
       type: "password",
       placeholder: isPresent ? "••••••••••••  (stored)" : prov.keyPlaceholder,
@@ -261,7 +331,7 @@ function apiSection(keyStatus: Record<string, boolean>): HTMLElement {
     async function refreshOne() {
       const present = (await Bridge.secretPresent(prov.secretKey)) ?? false;
       keyStatus[prov.secretKey] = present;
-      dot.style.background = present ? "#22c55e" : "#f4505e";
+      dot.style.background = (present || isCustom) ? "#22c55e" : "#f4505e";
       field.placeholder = present ? "••••••••••••  (stored)" : prov.keyPlaceholder;
       clearBtn.style.display = present ? "" : "none";
     }
@@ -308,10 +378,17 @@ function apiSection(keyStatus: Record<string, boolean>): HTMLElement {
   async function updateHeaderStatus() {
     const curP = PROVIDERS.find((p) => p.id === (settings.chatProvider || "anthropic")) ?? PROVIDERS[0];
     const present = keyStatus[curP.secretKey] ?? false;
-    headerDot.style.background = present ? "#22c55e" : "#f4505e";
-    state.textContent = present
-      ? `Active: ${curP.name} · Key stored.`
-      : `Active: ${curP.name} · No API key configured.`;
+    if (curP.id === "custom") {
+      headerDot.style.background = "#22c55e";
+      state.textContent = present
+        ? `Active: ${curP.name} · Endpoint configured & Key stored.`
+        : `Active: ${curP.name} · Endpoint configured (local / no auth).`;
+    } else {
+      headerDot.style.background = present ? "#22c55e" : "#f4505e";
+      state.textContent = present
+        ? `Active: ${curP.name} · Key stored.`
+        : `Active: ${curP.name} · No API key configured.`;
+    }
   }
 
   return h(
@@ -320,7 +397,10 @@ function apiSection(keyStatus: Record<string, boolean>): HTMLElement {
     h("h2", {}, headerDot, h("span", { text: "AI & Chat" })),
     state,
     h("div", { class: "row" }, h("label", { text: "Active provider" }), providerSelect),
+    customUrlRow,
+    customHint,
     h("div", { class: "row" }, h("label", { text: "Active model" }), modelSelect),
+    customModelRow,
     h("div", { class: "hint", style: "margin-top:6px;font-weight:500" }, h("span", { text: "API keys (Windows Credential Manager / Linux Secret Service)" })),
     keyRows,
   );
@@ -481,6 +561,11 @@ function generalSection(): HTMLElement {
     h("div", { class: "row" },
       h("label", { text: "Island lives on" }),
       screen,
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Stay on top" }),
+      toggle(settings.alwaysOnTop ?? true, (v) => { settings.alwaysOnTop = v; void save(); }),
+      h("span", { class: "hint", text: "Keep island visible over other windows (unpin to allow windows to cover it)" }),
     ),
     h("div", { class: "row" },
       h("label", { text: "Launch at startup" }),

@@ -68,18 +68,33 @@ pub struct ChatReply {
     pub text: String,
 }
 
+pub fn normalize_chat_endpoint(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "http://localhost:11434/v1/chat/completions".to_string();
+    }
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else if trimmed.ends_with("/v1") {
+        format!("{trimmed}/chat/completions")
+    } else {
+        format!("{trimmed}/v1/chat/completions")
+    }
+}
+
 /// One chat turn. Returns the assistant's text, or a message the island shows
 /// in the note view.
 pub async fn send(
     chat: &Chat,
     provider: &str,
     model: &str,
+    custom_url: &str,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
     match provider {
-        "openai" | "google" | "deepseek" => {
-            send_openai_compatible(chat, provider, model, query, context).await
+        "openai" | "google" | "deepseek" | "custom" => {
+            send_openai_compatible(chat, provider, model, custom_url, query, context).await
         }
         _ => send_anthropic(chat, model, query, context).await,
     }
@@ -176,18 +191,22 @@ async fn send_openai_compatible(
     chat: &Chat,
     provider: &str,
     model: &str,
+    custom_url: &str,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let (key_name, provider_name, endpoint) = match provider {
-        "openai" => ("openai-api-key", "OpenAI", "https://api.openai.com/v1/chat/completions"),
-        "google" => ("google-api-key", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
-        "deepseek" => ("deepseek-api-key", "DeepSeek", "https://api.deepseek.com/chat/completions"),
+    let (key_name, provider_name, endpoint): (&str, &str, String) = match provider {
+        "openai" => ("openai-api-key", "OpenAI", "https://api.openai.com/v1/chat/completions".to_string()),
+        "google" => ("google-api-key", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string()),
+        "deepseek" => ("deepseek-api-key", "DeepSeek", "https://api.deepseek.com/chat/completions".to_string()),
+        "custom" => ("custom-api-key", "Custom", normalize_chat_endpoint(custom_url)),
         _ => return Err(format!("Unknown provider {provider}")),
     };
 
-    let key = secrets::get(key_name)
-        .ok_or_else(|| format!("{provider_name} API key missing. Open settings."))?;
+    let key = secrets::get(key_name);
+    if provider != "custom" && key.is_none() {
+        return Err(format!("{provider_name} API key missing. Open settings."));
+    }
 
     let mut content: Vec<Value> = Vec::new();
     let mut text_prefix = String::new();
@@ -253,7 +272,7 @@ async fn send_openai_compatible(
         "messages": msgs,
     });
 
-    let response = match call_openai_compatible(endpoint, &key, &body).await {
+    let response = match call_openai_compatible(&endpoint, key.as_deref(), &body).await {
         Ok(v) => v,
         Err(err) => {
             chat.pop();
@@ -344,16 +363,24 @@ pub fn to_openai_messages(system_prompt: &str, history: &[Value]) -> Vec<Value> 
     msgs
 }
 
-async fn call_openai_compatible(endpoint: &str, key: &str, body: &Value) -> Result<Value, String> {
+async fn call_openai_compatible(endpoint: &str, key: Option<&str>, body: &Value) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(90))
         .build()
         .map_err(|e| e.to_string())?;
 
-    let response = client
+    let mut req = client
         .post(endpoint)
-        .header("authorization", format!("Bearer {key}"))
-        .header("content-type", "application/json")
+        .header("content-type", "application/json");
+
+    if let Some(k) = key {
+        let trimmed = k.trim();
+        if !trimmed.is_empty() {
+            req = req.header("authorization", format!("Bearer {trimmed}"));
+        }
+    }
+
+    let response = req
         .json(body)
         .send()
         .await
@@ -516,5 +543,33 @@ mod tests {
         assert_eq!(user_content[0]["text"], "look at this");
         assert_eq!(user_content[1]["type"], "image_url");
         assert_eq!(user_content[1]["image_url"]["url"], "data:image/png;base64,abc123==");
+    }
+
+    #[test]
+    fn normalize_chat_endpoint_cases() {
+        assert_eq!(
+            super::normalize_chat_endpoint("http://localhost:11434"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            super::normalize_chat_endpoint("http://localhost:11434/"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            super::normalize_chat_endpoint("http://localhost:11434/v1"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            super::normalize_chat_endpoint("http://localhost:11434/v1/chat/completions"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            super::normalize_chat_endpoint("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert_eq!(
+            super::normalize_chat_endpoint(""),
+            "http://localhost:11434/v1/chat/completions"
+        );
     }
 }

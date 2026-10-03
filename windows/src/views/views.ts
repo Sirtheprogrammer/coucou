@@ -22,6 +22,7 @@ export interface ViewActions {
   openUrl(url: string): void;
   decide(d: "allow" | "deny"): void;
   toggleSound(): void;
+  toggleAlwaysOnTop(): void;
   setVolume(v: number): void;
   setAutoClose(seconds: number): void;
   openSettingsWindow(): void;
@@ -416,6 +417,7 @@ function buildNote(): ViewHost {
 
 function buildSettings(actions: ViewActions): ViewHost {
   const soundSwitch = h("button", { class: "switch", onclick: () => actions.toggleSound() });
+  const aotSwitch = h("button", { class: "switch", onclick: () => actions.toggleAlwaysOnTop() });
   const volume = h("input", {
     type: "range", min: "0", max: "0.2", step: "0.005",
     oninput: (e: Event) => actions.setVolume(Number((e.target as HTMLInputElement).value)),
@@ -431,6 +433,7 @@ function buildSettings(actions: ViewActions): ViewHost {
     "div",
     { class: "settings-rows" },
     h("div", { class: "settings-row" }, soundSwitch, h("span", { text: "Sound" }), volume),
+    h("div", { class: "settings-row" }, aotSwitch, h("span", { text: "Stay on top" })),
     h(
       "div",
       { class: "settings-row" },
@@ -461,6 +464,7 @@ function buildSettings(actions: ViewActions): ViewHost {
     sync() {
       const s = State.settings;
       soundSwitch.classList.toggle("on", s.soundEnabled);
+      aotSwitch.classList.toggle("on", s.alwaysOnTop ?? true);
       volume.value = String(s.soundVolume);
       volume.style.opacity = s.soundEnabled ? "1" : "0.4";
       autoLabel.textContent = `Auto-close · ${Math.round(s.autoCloseInterval)}s`;

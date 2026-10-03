@@ -53,6 +53,14 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(soundEnabled, forKey: "soundEnabled") }
     }
 
+    // Pin to top (stay on top of other apps) — persisted
+    @Published var alwaysOnTop: Bool = true {
+        didSet {
+            UserDefaults.standard.set(alwaysOnTop, forKey: "alwaysOnTop")
+            NotificationCenter.default.post(name: .alwaysOnTopChanged, object: alwaysOnTop)
+        }
+    }
+
     // Claude model used by the chat and the search — persisted
     static let defaultClaudeModel = "claude-sonnet-4-6"
     @Published var claudeModel: String = AppState.defaultClaudeModel {
@@ -72,6 +80,12 @@ final class AppState: ObservableObject {
     @Published var deepSeekChatModel: String = ChatProvider.deepseek.defaultModel {
         didSet { UserDefaults.standard.set(deepSeekChatModel, forKey: "deepSeekChatModel") }
     }
+    @Published var customChatModel: String = ChatProvider.custom.defaultModel {
+        didSet { UserDefaults.standard.set(customChatModel, forKey: "customChatModel") }
+    }
+    @Published var customOpenAIUrl: String = "http://localhost:11434/v1" {
+        didSet { UserDefaults.standard.set(customOpenAIUrl, forKey: "customOpenAIUrl") }
+    }
 
     // The always-on workspace pill (default: VS Code). Persisted.
     @Published var mainPillId: String = PillCatalog.defaultMainPillId {
@@ -88,7 +102,8 @@ final class AppState: ObservableObject {
     func fetchModelsIfNeeded(for provider: ChatProvider) {
         guard !loadingProviderModels.contains(provider),
               fetchedProviderModels[provider] == nil else { return }
-        guard let apiKey = KeychainStore.shared.get(provider.keychainKey), !apiKey.isEmpty else {
+        let apiKey = KeychainStore.shared.get(provider.keychainKey)
+        if provider != .custom, (apiKey == nil || apiKey!.isEmpty) {
             providerModelFetchError[provider] = "No API key — add it in Settings."
             return
         }
@@ -97,22 +112,29 @@ final class AppState: ObservableObject {
         Task {
             let models: [(id: String, label: String)]
             switch provider {
-            case .anthropic: models = await ClaudeService.fetchModels(apiKey: apiKey)
-            case .google:    models = await ClaudeService.fetchGoogleModels(apiKey: apiKey)
-            case .openai:    models = await ClaudeService.fetchOpenAIModels(apiKey: apiKey)
-            case .deepseek:  models = await ClaudeService.fetchDeepSeekModels(apiKey: apiKey)
+            case .anthropic: models = await ClaudeService.fetchModels(apiKey: apiKey ?? "")
+            case .google:    models = await ClaudeService.fetchGoogleModels(apiKey: apiKey ?? "")
+            case .openai:    models = await ClaudeService.fetchOpenAIModels(apiKey: apiKey ?? "")
+            case .deepseek:  models = await ClaudeService.fetchDeepSeekModels(apiKey: apiKey ?? "")
+            case .custom:
+                let fetched = await ClaudeService.fetchCustomModels(baseURL: customOpenAIUrl, apiKey: apiKey)
+                models = fetched.isEmpty ? [
+                    ("llama3.3:70b", "Llama 3.3 70B"),
+                    ("deepseek-r1", "DeepSeek R1"),
+                    ("qwen2.5:72b", "Qwen 2.5 72B"),
+                    ("mistral-large-latest", "Mistral Large"),
+                ] : fetched
             }
             loadingProviderModels.remove(provider)
             if models.isEmpty {
-                providerModelFetchError[provider] = "Failed to load models. Check your API key."
+                providerModelFetchError[provider] = provider == .custom ? "Failed to connect to endpoint." : "Failed to load models. Check your API key."
             } else {
                 fetchedProviderModels[provider] = models
                 // If the saved model isn't in the fetched list, pick a sensible default:
-                // prefer "sonnet" (Anthropic), "flash" (Google), "mini" (OpenAI), "chat" (DeepSeek); else first.
                 switch provider {
                 case .anthropic:
                     if !models.contains(where: { $0.id == claudeModel }) {
-                        claudeModel = models.first(where: { $0.id.contains("sonnet") })?.id ?? models.first!.id
+                        claudeModel = models.first(where: { $0.id.contains("opus") })?.id ?? models.first(where: { $0.id.contains("sonnet") })?.id ?? models.first!.id
                     }
                 case .google:
                     if !models.contains(where: { $0.id == googleChatModel }) {
@@ -120,11 +142,15 @@ final class AppState: ObservableObject {
                     }
                 case .openai:
                     if !models.contains(where: { $0.id == openAIChatModel }) {
-                        openAIChatModel = models.first(where: { $0.id.contains("mini") })?.id ?? models.first!.id
+                        openAIChatModel = models.first(where: { $0.id.contains("4o") })?.id ?? models.first!.id
                     }
                 case .deepseek:
                     if !models.contains(where: { $0.id == deepSeekChatModel }) {
                         deepSeekChatModel = models.first(where: { $0.id.contains("chat") })?.id ?? models.first!.id
+                    }
+                case .custom:
+                    if !models.contains(where: { $0.id == customChatModel }) {
+                        customChatModel = models.first?.id ?? "llama3.3:70b"
                     }
                 }
             }
@@ -138,6 +164,7 @@ final class AppState: ObservableObject {
         case .google:    return googleChatModel
         case .openai:    return openAIChatModel
         case .deepseek:  return deepSeekChatModel
+        case .custom:    return customChatModel
         }
     }
 
@@ -254,6 +281,7 @@ final class AppState: ObservableObject {
         let ud = UserDefaults.standard
 
         if let v = ud.object(forKey: "soundEnabled") as? Bool   { soundEnabled = v }
+        if let v = ud.object(forKey: "alwaysOnTop")   as? Bool   { alwaysOnTop = v }
         if let v = ud.object(forKey: "soundVolume")  as? Double { soundVolume  = v }
         if let v = ud.string(forKey: "claudeModel"),
            !v.trimmingCharacters(in: .whitespaces).isEmpty { claudeModel = v }
@@ -261,6 +289,8 @@ final class AppState: ObservableObject {
         if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
         if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
         if let v = ud.string(forKey: "deepSeekChatModel"), !v.isEmpty { deepSeekChatModel = v }
+        if let v = ud.string(forKey: "customChatModel"), !v.isEmpty { customChatModel = v }
+        if let v = ud.string(forKey: "customOpenAIUrl"), !v.isEmpty { customOpenAIUrl = v }
         // Migrate old 60s default → 15s
         if let v = ud.object(forKey: "autoCloseInterval") as? Double {
             autoCloseInterval = (v == 60) ? 15 : v
